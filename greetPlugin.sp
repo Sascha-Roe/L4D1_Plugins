@@ -122,6 +122,8 @@ public Action Timer_GreetPlayer(Handle timer, int client)
 {
     if (!IsClientInGame(client)) return Plugin_Continue;
 
+    if (!HasAtLeastTwoPlayers()) return Plugin_Handled;
+
     char name[64];
     GetClientName(client, name, sizeof(name));
     PrintToChat(client, "\x04[EVIL DEAD]\x01 Welcome to EVIL DEAD \x04%s\x01! Greet your teammates to receive a reward! (type !hi, !hallo, !hola, etc...)", name);
@@ -166,6 +168,22 @@ bool isSlotOccupied(int client, int slot, const char[][] validItems, int itemCou
     for (int i = 0; i < itemCount; i++)
     {
         if (StrEqual(classname, validItems[i])) return true;
+    }
+
+    return false;
+}
+
+bool HasAtLeastTwoPlayers()
+{
+    int count = 0;
+
+    for (int i = 0; i <= MaxClients; i++)
+    {
+        if (IsClientInGame(i) && !IsFakeClient(i))
+        {
+            count++;
+            if (count >= 2) return true;
+        }
     }
 
     return false;
