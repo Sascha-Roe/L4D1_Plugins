@@ -174,7 +174,7 @@ bool HasAtLeastTwoPlayers()
 {
     int count = 0;
 
-    for (int i = 0; i <= MaxClients; i++)
+    for (int i = 1; i <= MaxClients; i++)
     {
         if (IsClientInGame(i) && !IsFakeClient(i))
         {
