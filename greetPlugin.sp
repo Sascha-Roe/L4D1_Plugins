@@ -8,7 +8,7 @@ public Plugin myinfo =
     description = "Rewards player for greeting newly joined players",
 };
 
-bool              canGreet[MAXPLAYERS + 1];
+bool              canGreet      = false;
 
 static const char greetings[][] = {
     "hi",
@@ -53,7 +53,7 @@ public void OnClientPutInServer(int client)
 
 public Action Command_Say(int client, int args)
 {
-    if (!canGreet[client]) return Plugin_Continue;
+    if (!canGreet) return Plugin_Continue;
 
     char text[192];
     GetCmdArgString(text, sizeof(text));
@@ -64,7 +64,7 @@ public Action Command_Say(int client, int args)
         if (StrEqual(text, greetings[i], false))
         {
             GiveItem(client);
-            canGreet[client] = false;
+            canGreet = false;
             return Plugin_Continue;
         }
     }
@@ -105,14 +105,14 @@ public Action Timer_GreetPlayer(Handle timer, int client)
         PrintToChat(i, "\x07[EVIL DEAD] %s \x01has joined the game!", name);
     }
 
-    canGreet[client] = true;
+    canGreet = true;
     CreateTimer(60.0, Timer_DisableGreet, client);
     return Plugin_Handled;
 }
 
 public Action Timer_DisableGreet(Handle timer, int client)
 {
-    canGreet[client] = false;
+    canGreet = false;
     return Plugin_Handled;
 }
 
