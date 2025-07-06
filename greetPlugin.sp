@@ -84,7 +84,7 @@ void GiveItem(int client)
         DispatchSpawn(entity);
         TeleportEntity(entity, NULL_VECTOR, NULL_VECTOR, NULL_VECTOR);
         EquipPlayerWeapon(client, entity);
-        PrintToChat(client, "\x07[EVIL DEAD] \x01You received the following item: \x07%s", givenItem);
+        PrintToChat(client, "\x04[EVIL DEAD] \x01You received the following item: \x04%s", givenItem);
     }
 }
 
@@ -96,13 +96,13 @@ public Action Timer_GreetPlayer(Handle timer, int client)
 
     char name[64];
     GetClientName(client, name, sizeof(name));
-    PrintToChat(client, "\x07[EVIL DEAD]\x01 Welcome to EVIL DEAD \x07%s\x01! Greet your teammates to receive a reward! (type hi, hallo, hola, etc...)", name);
+    PrintToChat(client, "\x04[EVIL DEAD]\x01 Welcome to EVIL DEAD \x04%s\x01! Greet your teammates to receive a reward! (type hi, hallo, hola, etc...)", name);
 
     // für alle außer neu gejointen Spieler
     for (int i = 1; i <= MaxClients; i++)
     {
         if (i == client || !IsClientInGame(i) || IsFakeClient(i)) continue;
-        PrintToChat(i, "\x07[EVIL DEAD] %s \x01has joined the game!", name);
+        PrintToChat(i, "\x04[EVIL DEAD] %s \x01has joined the game!", name);
     }
 
     canGreet = true;
