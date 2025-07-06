@@ -43,21 +43,17 @@ static const char healItems[][] = {
 
 static const char nadeItems[][] = { "weapon_molotov", "weapon_pipe_bomb" };
 
-public void onPluginStart()
+public OnPluginStart()
 {
+    LogMessage("[greetPlugin.smx] Greet Plugin started!");
     PrintToServer("Greet Plugin started!");
-    HookEvent("player_first_spawn", playerSpawned, EventHookMode_Post);
     RegConsoleCmd("say", Command_Say);
 }
 
-public Action playerSpawned(Event event, const char[] name, bool dontBroadcast)
+public void OnClientPutInServer(int client)
 {
-    int client = GetClientOfUserId(event.GetInt("userid"));
-
-    if (!isValidClient(client)) return Plugin_Continue;
-
-    CreateTimer(2.0, Timer_GreetPlayer, client);
-    return Plugin_Continue;
+    if (!isValidClient(client)) return;
+    CreateTimer(5.0, Timer_GreetPlayer, client);
 }
 
 public Action Command_Say(int client, int args)
