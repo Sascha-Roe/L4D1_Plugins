@@ -45,7 +45,8 @@ static const char nadeItems[][] = { "weapon_molotov", "weapon_pipe_bomb" };
 
 public void onPluginStart()
 {
-    HookEvent("player_spawn", playerSpawned, EventHookMode_Post);
+    PrintToServer("Greet Plugin started!");
+    HookEvent("player_first_spawn", playerSpawned, EventHookMode_Post);
     RegConsoleCmd("say", Command_Say);
 }
 
