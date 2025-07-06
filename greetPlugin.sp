@@ -36,7 +36,7 @@ static const char greetings[][] = {
     "olá",
 };
 
-static const char items[][] = { "weapon_pain_pills", "weapon_molotov", "weapon_pipe_bomb" }
+static const char items[][] = { "weapon_pain_pills", "weapon_molotov", "weapon_pipe_bomb" };
 
 public OnPluginStart()
 {
