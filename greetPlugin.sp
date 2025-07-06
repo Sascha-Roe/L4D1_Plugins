@@ -11,37 +11,32 @@ public Plugin myinfo =
 bool              canGreet[MAXPLAYERS + 1];
 
 static const char greetings[][] = {
-    "!hi",
-    "!hello",
-    "!hey",
-    "!yo",
+    "hi",
+    "hello",
+    "hey",
+    "yo",
 
-    "!hallo",
-    "!servus",
-    "!moin",
+    "hallo",
+    "servus",
+    "moin",
 
-    "!hola",
-    "!buenas",
+    "hola",
+    "buenas",
 
-    "!salut",
-    "!bonjour",
+    "salut",
+    "bonjour",
 
-    "!ciao",
-    "!buongiorno",
+    "ciao",
+    "buongiorno",
 
-    "!hej",
-    "!hei",
+    "hej",
+    "hei",
 
-    "!ola",
-    "!olá",
+    "ola",
+    "olá",
 };
 
-static const char healItems[][] = {
-    //"weapon_first_aid_kit",
-    "weapon_pain_pills",
-};
-
-static const char nadeItems[][] = { "weapon_molotov", "weapon_pipe_bomb" };
+static const char items[][] = { "weapon_pain_pills", "weapon_molotov", "weapon_pipe_bomb" }
 
 public OnPluginStart()
 {
@@ -53,7 +48,7 @@ public OnPluginStart()
 public void OnClientPutInServer(int client)
 {
     if (!isValidClient(client)) return;
-    CreateTimer(5.0, Timer_GreetPlayer, client);
+    CreateTimer(10.0, Timer_GreetPlayer, client);
 }
 
 public Action Command_Say(int client, int args)
@@ -68,51 +63,29 @@ public Action Command_Say(int client, int args)
     {
         if (StrEqual(text, greetings[i], false))
         {
-            GiveRandomFreeItem(client);
+            GiveItem(client);
             canGreet[client] = false;
-            return Plugin_Handled;
+            return Plugin_Continue;
         }
     }
 
     return Plugin_Continue;
 }
 
-void GiveRandomFreeItem(int client)
+void GiveItem(int client)
 {
-    // Slot 3 = Heal-Items
-    bool hasHeal = isSlotOccupied(client, 3, healItems, sizeof(healItems));
-    // Slot 2 = Throwables
-    bool hasNade = isSlotOccupied(client, 2, nadeItems, sizeof(nadeItems));
-
-    int  health  = GetClientHealth(client);
-
+    int  itemIndex = GetRandomInt(0, sizeof(items) - 1);
     char givenItem[64];
-    givenItem[0] = '\0';
-    int itemIndex;
-    if (!hasHeal)
-    {
-        if (health <= 20)
-        {
-            GiveItem(client, "weapon_first_aid_kit");
-            strcopy(givenItem, sizeof(givenItem), "weapon_first_aid_kit");
-        }
-        else {
-            itemIndex = GetRandomInt(0, sizeof(healItems) - 1);
-            GiveItem(client, healItems[itemIndex]);
-            strcopy(givenItem, sizeof(givenItem), healItems[itemIndex]);
-        }
-    }
-    else if (!hasNade) {
-        itemIndex = GetRandomInt(0, sizeof(nadeItems) - 1);
-        GiveItem(client, nadeItems[itemIndex]);
-        strcopy(givenItem, sizeof(givenItem), nadeItems[itemIndex]);
-    }
-    else {
-        PrintToChat(client, "\x04[EVIL DEAD] \x01Unfortunately all your item slots are occupied!");
-        return;
-    }
+    strcopy(givenItem, sizeof(givenItem), items[itemIndex]);
+    int entity = CreateEntityByName(givenItem);
 
-    PrintToChat(client, "\x04[EVIL DEAD] \x01You received the following item: \x04%s", givenItem);
+    if (entity != -1)
+    {
+        DispatchSpawn(entity);
+        TeleportEntity(entity, NULL_VECTOR, NULL_VECTOR, NULL_VECTOR);
+        EquipPlayerWeapon(client, entity);
+        PrintToChat(client, "\x07[EVIL DEAD] \x01You received the following item: \x07%s", givenItem);
+    }
 }
 
 public Action Timer_GreetPlayer(Handle timer, int client)
@@ -123,13 +96,13 @@ public Action Timer_GreetPlayer(Handle timer, int client)
 
     char name[64];
     GetClientName(client, name, sizeof(name));
-    PrintToChat(client, "\x04[EVIL DEAD]\x01 Welcome to EVIL DEAD \x04%s\x01! Greet your teammates to receive a reward! (type !hi, !hallo, !hola, etc...)", name);
+    PrintToChat(client, "\x07[EVIL DEAD]\x01 Welcome to EVIL DEAD \x07%s\x01! Greet your teammates to receive a reward! (type hi, hallo, hola, etc...)", name);
 
     // für alle außer neu gejointen Spieler
     for (int i = 1; i <= MaxClients; i++)
     {
         if (i == client || !IsClientInGame(i) || IsFakeClient(i)) continue;
-        PrintToChat(i, "\x04[EVIL DEAD] %s \x01has joined the game! Greet your new teammate to receive a reward! (type !hi, !hallo, !hola, etc...)", name);
+        PrintToChat(i, "\x07[EVIL DEAD] %s \x01has joined the game!", name);
     }
 
     canGreet[client] = true;
@@ -141,33 +114,6 @@ public Action Timer_DisableGreet(Handle timer, int client)
 {
     canGreet[client] = false;
     return Plugin_Handled;
-}
-
-void GiveItem(int client, const char[] itemName)
-{
-    int entity = CreateEntityByName(itemName);
-    if (entity != -1)
-    {
-        DispatchSpawn(entity);
-        TeleportEntity(entity, NULL_VECTOR, NULL_VECTOR, NULL_VECTOR);
-        EquipPlayerWeapon(client, entity);
-    }
-}
-
-bool isSlotOccupied(int client, int slot, const char[][] validItems, int itemCount)
-{
-    int weapon = GetPlayerWeaponSlot(client, slot);
-    if (weapon == -1) return false;
-
-    char classname[64];
-    GetEdictClassname(weapon, classname, sizeof(classname));
-
-    for (int i = 0; i < itemCount; i++)
-    {
-        if (StrEqual(classname, validItems[i])) return true;
-    }
-
-    return false;
 }
 
 bool HasAtLeastTwoPlayers()
