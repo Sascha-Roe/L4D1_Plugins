@@ -42,13 +42,16 @@ public OnPluginStart()
 {
     LogMessage("[greetPlugin.smx] Greet Plugin started!");
     PrintToServer("Greet Plugin started!");
+    HookEvent("player_first_spawn", playerSpawned, EventHookMode_Post);
     RegConsoleCmd("say", Command_Say);
 }
 
-public void OnClientPutInServer(int client)
+public Action playerSpawned(Event event, const char[] name, bool dontBroadcast)
 {
-    if (!isValidClient(client)) return;
+    int client = GetClientOfUserId(event.GetInt("userid"));
+    if (!isValidClient(client)) return Plugin_Continue;
     CreateTimer(10.0, Timer_GreetPlayer, client);
+    return Plugin_Continue;
 }
 
 public Action Command_Say(int client, int args)
