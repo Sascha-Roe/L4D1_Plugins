@@ -40,8 +40,7 @@ static const char items[][] = { "weapon_pain_pills", "weapon_molotov", "weapon_p
 
 public OnPluginStart()
 {
-    LogMessage("[greetPlugin.smx] Greet Plugin started!");
-    PrintToServer("Greet Plugin started!");
+    LogMessage("Greet Plugin started!");
     HookEvent("player_first_spawn", playerSpawned, EventHookMode_Post);
     RegConsoleCmd("say", Command_Say);
 }
@@ -50,7 +49,7 @@ public Action playerSpawned(Event event, const char[] name, bool dontBroadcast)
 {
     int client = GetClientOfUserId(event.GetInt("userid"));
     if (!isValidClient(client)) return Plugin_Continue;
-    CreateTimer(10.0, Timer_GreetPlayer, client);
+    CreateTimer(2.5, Timer_GreetPlayer, client);
     return Plugin_Continue;
 }
 
@@ -99,7 +98,7 @@ public Action Timer_GreetPlayer(Handle timer, int client)
 
     char name[64];
     GetClientName(client, name, sizeof(name));
-    PrintToChat(client, "\x04[EVIL DEAD]\x01 Welcome to EVIL DEAD \x04%s\x01! Greet your teammates to receive a reward! (type hi, hallo, hola, etc...)", name);
+    PrintCenterText(client, "Welcome to EVIL DEAD %s!\nGreet your teammates to receive a reward! (type hi, hallo, hola, ...)", name);
 
     // für alle außer neu gejointen Spieler
     for (int i = 1; i <= MaxClients; i++)
