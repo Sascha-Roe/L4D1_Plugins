@@ -1,5 +1,6 @@
 #include <sourcemod>
 #include <sdktools>
+#include <sdkhooks>
 
 public Plugin myinfo =
 {
@@ -9,6 +10,12 @@ public Plugin myinfo =
 
 };
 
+enum TankType
+{
+    Tank_Default = 0,
+    Tank_Fire,
+}
+
 ConVar g_hIncludeBots;
 
 ConVar g_iPlayerThreshold1;
@@ -16,6 +23,8 @@ ConVar g_iPlayerThreshold2;
 
 ConVar g_iTankBaseHealth;
 ConVar g_iTankBonusHealthPerSurvivor;
+
+bool   g_bIsFireTank[MAXPLAYERS + 1];
 
 int    g_iMaxTanks = 1;
 
@@ -36,9 +45,15 @@ public void OnPluginStart()
 
 public void onTankSpawn(Event event, const char[] name, bool dontBroadcast)
 {
-    LogMessage("Tank spawn triggered!");
-
     SetTankHealth();
+
+    int      client = GetClientOfUserId(event.GetInt("userid"));
+    TankType type   = GetRandomSpecialTankType();
+    int      packed = (view_as<int>(type) << 8) | client;
+    if (type != Tank_Default)
+    {
+        CreateTimer(0.1, Timer_ApplySpecialTankEffects, packed);
+    }
 
     int aliveTanks = GetAliveTankCount();
     LogMessage("Currently alive tanks: %i", aliveTanks);
@@ -81,8 +96,6 @@ public Action SpawnExtraTank(Handle timer, any existingTankClient)
         return Plugin_Stop;
     }
 
-    LogMessage("Spawning extra tank...");
-
     if (!IsValidClient(existingTankClient) || !IsTank(existingTankClient))
     {
         return Plugin_Stop;
@@ -103,6 +116,158 @@ public Action SpawnExtraTank(Handle timer, any existingTankClient)
     LogMessage("New tank spawned, (%d/%d) tanks alive!", updatedAliveTanks, g_iMaxTanks);
 
     return Plugin_Stop;
+}
+
+TankType GetRandomSpecialTankType()
+{
+    int roll = GetRandomInt(1, 100);
+
+    // 50% chance for special tank
+    if (roll > 50)
+    {
+        LogMessage("Normal tank rolled!");
+        return Tank_Default;
+    }
+
+    int selection = GetRandomInt(1, 1);
+
+    switch (selection)
+    {
+        case 1:
+        {
+            LogMessage("Fire tank rolled!");
+            return Tank_Fire;
+        }
+    }
+
+    return Tank_Default;
+}
+
+public Action Timer_ApplySpecialTankEffects(Handle timer, any packed)
+{
+    int      client = packed & 0xFF;
+    TankType type   = view_as<TankType>(packed >> 8);
+
+    if (!IsValidClient(client) || !IsTank(client))
+    {
+        return Plugin_Stop;
+    }
+
+    LogMessage("Apply Special Effects: %d", type);
+
+    switch (type)
+    {
+        case Tank_Fire:
+        {
+            g_bIsFireTank[client] = true;
+            SetEntityRenderColor(client, 255, 0, 0, 255);
+            SDKHook(client, SDKHook_OnTakeDamage, OnFireTankDamage);
+            PrintToChatAll("Fire tank spawned!");
+        }
+    }
+
+    return Plugin_Stop;
+}
+
+// prevent fire tank from getting fire damage
+public Action OnFireTankDamage(int victim, int &attacker, int &inflictor, float &damage, int &damagetype)
+{
+    if (IsValidClient(victim) && IsTank(victim))
+    {
+        if (damagetype & DMG_BURN || damagetype & DMG_SLOWBURN)
+        {
+            damage = 0.0;
+            return Plugin_Handled;
+        }
+    }
+    return Plugin_Continue;
+}
+
+public void OnEntityCreated(int entity, const char[] classname)
+{
+    if (StrEqual(classname, "tank_rock"))
+    {
+        SDKHook(entity, SDKHook_SpawnPost, OnRockSpawned);
+    }
+}
+
+public Action OnRockSpawned(int entity)
+{
+    int ref = EntIndexToEntRef(entity);
+    CreateTimer(0.1, CheckRockThrowLater, ref);
+
+    return Plugin_Continue;
+}
+
+public Action CheckRockThrowLater(Handle timer, any ref)
+{
+    int entity = EntRefToEntIndex(ref);
+    if (entity == INVALID_ENT_REFERENCE || !IsValidEntity(entity))
+    {
+        return Plugin_Stop;
+    }
+
+    int owner = GetEntPropEnt(entity, Prop_Send, "m_hThrower");
+
+    if (IsValidClient(owner) && g_bIsFireTank[owner])
+    {
+        SDKHook(entity, SDKHook_Touch, OnRockTouch);
+    }
+    else
+    {
+        LogMessage("Rock owner is not valid or not a FireTank.");
+    }
+    return Plugin_Stop;
+}
+
+public Action OnRockTouch(int entity, int other)
+{
+    if (!IsValidEntity(entity))
+        return Plugin_Continue;
+
+    float pos[3];
+    GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos);
+    CreateFireGridAtPosition(pos);
+
+    SDKUnhook(entity, SDKHook_Touch, OnRockTouch);
+    return Plugin_Continue;
+}
+
+void CreateFireGridAtPosition(float center[3], float spread = 25.0)
+{
+    for (int x = -2; x <= 2; x++)
+    {
+        for (int y = -2; y <= 2; y++)
+        {
+            float firePos[3];
+            firePos[0] = center[0] + (x * spread);
+            firePos[1] = center[1] + (y * spread);
+            firePos[2] = center[2];
+            SpawnFire(firePos);
+        }
+    }
+
+    EmitSoundToAll("weapons/molotov/explode.wav", .origin = center);
+}
+
+public void SpawnFire(float pos[3])
+{
+    int fire = CreateEntityByName("env_fire");
+    if (fire == -1)
+    {
+        LogMessage("Feuer konnte nicht erzeugt werden!");
+        return;
+    }
+
+    DispatchKeyValue(fire, "health", "10");           // fire duration in seconds
+    DispatchKeyValue(fire, "firesize", "32");         // visible size
+    DispatchKeyValue(fire, "fireattack", "1");        // damage per tick
+    DispatchKeyValue(fire, "damagescale", "0.25");    // damage
+    DispatchKeyValue(fire, "spawnflags", "132");
+
+    DispatchSpawn(fire);
+    TeleportEntity(fire, pos, NULL_VECTOR, NULL_VECTOR);
+    AcceptEntityInput(fire, "StartFire");
 }
 
 public void SetTankHealth()
