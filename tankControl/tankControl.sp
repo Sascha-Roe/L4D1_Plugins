@@ -14,6 +14,7 @@ enum TankType
 {
     Tank_Default = 0,
     Tank_Fire,
+    Tank_Speed,
 }
 
 ConVar g_hIncludeBots;
@@ -24,7 +25,16 @@ ConVar g_iPlayerThreshold2;
 ConVar g_iTankBaseHealth;
 ConVar g_iTankBonusHealthPerSurvivor;
 
+ConVar g_fSpeedTankBaseSpeedMultiplier;
+ConVar g_fSpeedTankBoostMultiplier;
+ConVar g_fSpeedTankBoostDuration;
+ConVar g_hSpeedTankBoostCooldownInterval;
+
 bool   g_bIsFireTank[MAXPLAYERS + 1];
+
+/* bool   g_bIsSpeedTank[MAXPLAYERS + 1]; */
+bool   g_bIsBoosted[MAXPLAYERS + 1];
+int    g_BoostCooldown[MAXPLAYERS + 1];
 
 int    g_iMaxTanks = 1;
 
@@ -32,34 +42,56 @@ public void OnPluginStart()
 {
     LogMessage("Tank Control started!");
 
-    g_hIncludeBots                = CreateConVar("tankcontrol_includebots", "1", "Set to 1 if you want plugin to process bots too.", FCVAR_PLUGIN | FCVAR_NOTIFY);
-    g_iPlayerThreshold1           = CreateConVar("tankcontrol_playerThreshold_1", "6", "Set player threshold value when 2 tanks should spawn", FCVAR_PLUGIN | FCVAR_NOTIFY);
-    g_iPlayerThreshold2           = CreateConVar("tankcontrol_playerThreshold_2", "8", "Set player threshold value when 3 tanks should spawn", FCVAR_PLUGIN | FCVAR_NOTIFY);
-    g_iTankBaseHealth             = CreateConVar("tankcontrol_tankBaseHealth", "10000", "Set the base health of tank", FCVAR_PLUGIN | FCVAR_NOTIFY);
-    g_iTankBonusHealthPerSurvivor = CreateConVar("tankcontrol_tankBonusHealthPerSurvivor", "1500", "Set the bonus health each tank gets for each survivor", FCVAR_PLUGIN | FCVAR_NOTIFY);
+    g_hIncludeBots                    = CreateConVar("tankcontrol_includebots", "0", "Set to 1 if you want plugin to process bots too.", FCVAR_PLUGIN | FCVAR_NOTIFY);
+    g_iPlayerThreshold1               = CreateConVar("tankcontrol_playerThreshold_1", "6", "Set player threshold value when 2 tanks should spawn", FCVAR_PLUGIN | FCVAR_NOTIFY);
+    g_iPlayerThreshold2               = CreateConVar("tankcontrol_playerThreshold_2", "8", "Set player threshold value when 3 tanks should spawn", FCVAR_PLUGIN | FCVAR_NOTIFY);
+    g_iTankBaseHealth                 = CreateConVar("tankcontrol_tankBaseHealth", "10000", "Set the base health of tank", FCVAR_PLUGIN | FCVAR_NOTIFY);
+    g_iTankBonusHealthPerSurvivor     = CreateConVar("tankcontrol_tankBonusHealthPerSurvivor", "1500", "Set the bonus health each tank gets for each survivor", FCVAR_PLUGIN | FCVAR_NOTIFY);
+
+    g_fSpeedTankBaseSpeedMultiplier   = CreateConVar("tankcontrol_speedTankBaseSpeedMultiplier", "0.9", "Set the Speed Tank's base speed multiplier (1.0 = normal speed, 0.9 = 90% of normal speed, etc.)", FCVAR_PLUGIN | FCVAR_NOTIFY);
+    g_fSpeedTankBoostMultiplier       = CreateConVar("tankcontrol_speedTankBoostMultiplier", "1.1", "Set the Speed Tank's boost speed multiplier (1.0 = normal speed, 1.1 = 110% of normal speed, etc.)", FCVAR_PLUGIN | FCVAR_NOTIFY);
+    g_fSpeedTankBoostDuration         = CreateConVar("tankcontrol_speedTankBoostDuration", "15.0", "Set the Speed Tank's boost duration in seconds", FCVAR_PLUGIN | FCVAR_NOTIFY);
+    g_hSpeedTankBoostCooldownInterval = CreateConVar("tankcontrol_speedTankBoostCooldownInterval", "10-30", "Set the Speed Tank's cooldown interval (e. g. 10-30 = cooldown for speed boost lasts somewhere between 10 and 30 seconds)", FCVAR_PLUGIN | FCVAR_NOTIFY);
 
     AutoExecConfig(true, "tankControl");
 
+    PrecacheSound("weapons/molotov/explode.wav", true);
+
     HookEvent("tank_spawn", onTankSpawn);
+}
+
+public void OnClientPutInServer(int client)
+{
+    SDKHook(client, SDKHook_OnTakeDamage, OnSurvivorDamaged);
 }
 
 public void onTankSpawn(Event event, const char[] name, bool dontBroadcast)
 {
     SetTankHealth();
 
-    int      client = GetClientOfUserId(event.GetInt("userid"));
+    int client = GetClientOfUserId(event.GetInt("userid"));
+
+    // reset flag to prevent normal tank from throwing burning rocks
+    resetFlags(client);
+
     TankType type   = GetRandomSpecialTankType();
     int      packed = (view_as<int>(type) << 8) | client;
-    if (type != Tank_Default)
+    if (type != Tank_Default && !IsSpecialTankAlive())
     {
         CreateTimer(0.1, Timer_ApplySpecialTankEffects, packed);
     }
-
-    int aliveTanks = GetAliveTankCount();
-    LogMessage("Currently alive tanks: %i", aliveTanks);
+    else
+    {
+        PrintToChatAll("\x04[Mutant Tanks] \x01Normal tank spawned!");
+    }
 
     int survivorCount = GetSurvivorCount(g_hIncludeBots.BoolValue);
 
+    if (survivorCount < g_iPlayerThreshold1.IntValue)
+    {
+        g_iMaxTanks = 1;
+        LogMessage("survivorCount=%d, g_iPlayerThreshold1=%d -> g_iMaxTanks=%d", survivorCount, g_iPlayerThreshold1.IntValue, g_iMaxTanks);
+    }
     if (survivorCount >= g_iPlayerThreshold1.IntValue)
     {
         g_iMaxTanks = 2;
@@ -70,6 +102,9 @@ public void onTankSpawn(Event event, const char[] name, bool dontBroadcast)
         g_iMaxTanks = 3;
         LogMessage("survivorCount=%d, g_iPlayerThreshold1=%d -> g_iMaxTanks=%d", survivorCount, g_iPlayerThreshold2.IntValue, g_iMaxTanks);
     }
+
+    int aliveTanks = GetAliveTankCount();
+    LogMessage("Currently alive tanks: %i", aliveTanks);
 
     if (aliveTanks >= g_iMaxTanks)
     {
@@ -120,16 +155,18 @@ public Action SpawnExtraTank(Handle timer, any existingTankClient)
 
 TankType GetRandomSpecialTankType()
 {
-    int roll = GetRandomInt(1, 100);
+    /* int roll = GetRandomInt(1, 100);
 
     // 50% chance for special tank
     if (roll > 50)
     {
         LogMessage("Normal tank rolled!");
         return Tank_Default;
-    }
+    } */
 
-    int selection = GetRandomInt(1, 1);
+    /* int selection = GetRandomInt(1, 2) */
+
+    int selection = GetRandomInt(2, 2);
 
     switch (selection)
     {
@@ -137,6 +174,10 @@ TankType GetRandomSpecialTankType()
         {
             LogMessage("Fire tank rolled!");
             return Tank_Fire;
+        }
+        case 2:
+        {
+            return Tank_Speed;
         }
     }
 
@@ -162,11 +203,75 @@ public Action Timer_ApplySpecialTankEffects(Handle timer, any packed)
             g_bIsFireTank[client] = true;
             SetEntityRenderColor(client, 255, 0, 0, 255);
             SDKHook(client, SDKHook_OnTakeDamage, OnFireTankDamage);
-            PrintToChatAll("Fire tank spawned!");
+            CreateTimer(0.2, FireTank_TrailTimer, GetClientUserId(client), TIMER_REPEAT);
+            PrintToChatAll("\x04[Mutant Tanks] \x01Fire tank spawned!");
+        }
+        case Tank_Speed:
+        {
+            SetEntityRenderColor(client, 0, 255, 0, 255);
+            SetEntPropFloat(client, Prop_Data, "m_flLaggedMovementValue", g_fSpeedTankBaseSpeedMultiplier.FloatValue);
+            CreateTimer(1.0, SpeedTank_BoostTimer, GetClientUserId(client), TIMER_REPEAT);
+            PrintToChatAll("\x04[Mutant Tanks] \x01Speed tank spawned!");
         }
     }
 
     return Plugin_Stop;
+}
+
+public Action SpeedTank_BoostTimer(Handle timer, any userid)
+{
+    int client = GetClientOfUserId(userid);
+    if (!IsValidClient(client) || !IsTank(client) || !IsPlayerAlive(client))
+        return Plugin_Stop;
+
+    if (g_bIsBoosted[client])
+    {
+        PrintHintTextToAll("[Speed Tank] Boost active!");
+        return Plugin_Continue;
+    }
+
+    if (g_BoostCooldown[client] > 0)
+    {
+        PrintHintTextToAll("[Speed Tank] Boost in %d...", g_BoostCooldown[client]);
+        g_BoostCooldown[client]--;
+        return Plugin_Continue;
+    }
+
+    g_bIsBoosted[client] = true;
+    SetEntPropFloat(client, Prop_Data, "m_flLaggedMovementValue", g_fSpeedTankBoostMultiplier.FloatValue);
+
+    CreateTimer(g_fSpeedTankBoostDuration.FloatValue, ResetSpeedTankSpeed, GetClientUserId(client));
+
+    return Plugin_Continue;
+}
+
+public Action ResetSpeedTankSpeed(Handle timer, any userid)
+{
+    int client = GetClientOfUserId(userid);
+    if (!IsValidClient(client) || !IsTank(client) || !IsPlayerAlive(client))
+        return Plugin_Stop;
+
+    SetEntPropFloat(client, Prop_Data, "m_flLaggedMovementValue", g_fSpeedTankBaseSpeedMultiplier.FloatValue);
+    g_bIsBoosted[client]    = false;
+
+    int delay               = GetRandomCooldownFromConVar(g_hSpeedTankBoostCooldownInterval);
+    g_BoostCooldown[client] = delay;
+
+    return Plugin_Stop;
+}
+
+// sawn fire trail where tank is walking
+public Action FireTank_TrailTimer(Handle timer, any userid)
+{
+    int client = GetClientOfUserId(userid);
+
+    if (!IsValidClient(client) || !IsPlayerAlive(client) || !g_bIsFireTank[client]) return Plugin_Stop;
+
+    float pos[3];
+    GetClientAbsOrigin(client, pos);
+
+    SpawnFire(pos, "4", "1");
+    return Plugin_Continue;
 }
 
 // prevent fire tank from getting fire damage
@@ -194,11 +299,12 @@ public void OnEntityCreated(int entity, const char[] classname)
 public Action OnRockSpawned(int entity)
 {
     int ref = EntIndexToEntRef(entity);
-    CreateTimer(0.1, CheckRockThrowLater, ref);
+    CreateTimer(0.3, CheckRockThrowLater, ref);
 
     return Plugin_Continue;
 }
 
+// check if rock thrower is fire tank
 public Action CheckRockThrowLater(Handle timer, any ref)
 {
     int entity = EntRefToEntIndex(ref);
@@ -213,6 +319,20 @@ public Action CheckRockThrowLater(Handle timer, any ref)
     {
         SDKHook(entity, SDKHook_Touch, OnRockTouch);
     }
+    else if (IsValidClient(owner) && g_bIsBoosted[owner]) {
+        float velocity[3];
+        GetEntPropVector(entity, Prop_Data, "m_vecVelocity", velocity);
+
+        float speed = GetVectorLength(velocity);
+        if (speed < 50.0)
+        {
+            CreateTimer(0.05, CheckRockThrowLater, ref);
+            return Plugin_Stop;
+        }
+
+        ScaleVector(velocity, 1.75);
+        TeleportEntity(entity, NULL_VECTOR, NULL_VECTOR, velocity);
+    }
     else
     {
         LogMessage("Rock owner is not valid or not a FireTank.");
@@ -220,9 +340,11 @@ public Action CheckRockThrowLater(Handle timer, any ref)
     return Plugin_Stop;
 }
 
+// spawn fire where the fire tank rock hits
 public Action OnRockTouch(int entity, int other)
 {
-    if (!IsValidEntity(entity))
+    int owner = GetEntPropEnt(entity, Prop_Send, "m_hThrower");
+    if (!IsValidEntity(entity) || !g_bIsFireTank[owner])
         return Plugin_Continue;
 
     float pos[3];
@@ -231,6 +353,34 @@ public Action OnRockTouch(int entity, int other)
 
     SDKUnhook(entity, SDKHook_Touch, OnRockTouch);
     return Plugin_Continue;
+}
+
+public Action OnSurvivorDamaged(int victim, int &attacker, int &inflictor, float &damage, int &damagetype)
+{
+    if (!IsValidClient(attacker) || !IsTank(attacker)) return Plugin_Continue;
+
+    if (!g_bIsFireTank[attacker]) return Plugin_Continue;
+
+    CreateTimer(0.5, DealFireTankDoT, GetClientUserId(victim));
+
+    return Plugin_Continue;
+}
+
+// deal fire damage to player if hit by fire tank
+public Action DealFireTankDoT(Handle timer, any userid)
+{
+    int client = GetClientOfUserId(userid);
+    if (!IsValidClient(client) || !IsPlayerAlive(client)) return Plugin_Stop;
+
+    int   attacker  = 0;
+    int   inflictor = 0;
+    float damage    = 5.0;
+    int   dmgType   = DMG_BURN;
+
+    LogMessage("inflicting fire damage!");
+
+    SDKHooks_TakeDamage(client, inflictor, attacker, damage, dmgType);
+    return Plugin_Stop;
 }
 
 void CreateFireGridAtPosition(float center[3], float spread = 25.0)
@@ -243,14 +393,14 @@ void CreateFireGridAtPosition(float center[3], float spread = 25.0)
             firePos[0] = center[0] + (x * spread);
             firePos[1] = center[1] + (y * spread);
             firePos[2] = center[2];
-            SpawnFire(firePos);
+            SpawnFire(firePos, "32", "10");
         }
     }
 
     EmitSoundToAll("weapons/molotov/explode.wav", .origin = center);
 }
 
-public void SpawnFire(float pos[3])
+public void SpawnFire(float pos[3], char[] fireSize, char[] duration)
 {
     int fire = CreateEntityByName("env_fire");
     if (fire == -1)
@@ -259,10 +409,10 @@ public void SpawnFire(float pos[3])
         return;
     }
 
-    DispatchKeyValue(fire, "health", "10");           // fire duration in seconds
-    DispatchKeyValue(fire, "firesize", "32");         // visible size
-    DispatchKeyValue(fire, "fireattack", "1");        // damage per tick
-    DispatchKeyValue(fire, "damagescale", "0.25");    // damage
+    DispatchKeyValue(fire, "health", duration);      // fire duration in seconds
+    DispatchKeyValue(fire, "firesize", fireSize);    // visible size
+    DispatchKeyValue(fire, "fireattack", "1");       // damage per tick
+    DispatchKeyValue(fire, "damagescale", "0.1");    // damage
     DispatchKeyValue(fire, "spawnflags", "132");
 
     DispatchSpawn(fire);
@@ -340,4 +490,40 @@ bool IsTank(int client)
 bool IsValidClient(int client)
 {
     return (client > 0 && client <= MaxClients && IsClientInGame(client));
+}
+
+bool IsSpecialTankAlive()
+{
+    for (int i = 1; i <= MaxClients; i++)
+    {
+        if (IsClientInGame(i) && IsPlayerAlive(i) && IsTank(i))
+        {
+            if (g_bIsFireTank[i])
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+public void resetFlags(int client)
+{
+    g_bIsFireTank[client]   = false;
+    g_bIsBoosted[client]    = false;
+    g_BoostCooldown[client] = 0;
+}
+
+int GetRandomCooldownFromConVar(ConVar convar)
+{
+    char buffer[32];
+    convar.GetString(buffer, sizeof(buffer));
+
+    char parts[2][16];
+    ExplodeString(buffer, "-", parts, sizeof(parts), sizeof(parts[]));
+
+    int min = StringToInt(parts[0]);
+    int max = StringToInt(parts[1]);
+
+    return GetRandomInt(min, max);
 }
