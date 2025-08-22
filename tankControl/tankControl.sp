@@ -15,9 +15,11 @@ enum TankType
     Tank_Default = 0,
     Tank_Fire,
     Tank_Speed,
+    Tank_Teleport,
 }
 
 ConVar g_hIncludeBots;
+ConVar g_iSpecialTankChance;
 
 ConVar g_iPlayerThreshold1;
 ConVar g_iPlayerThreshold2;
@@ -32,9 +34,12 @@ ConVar g_hSpeedTankBoostCooldownInterval;
 
 bool   g_bIsFireTank[MAXPLAYERS + 1];
 
-/* bool   g_bIsSpeedTank[MAXPLAYERS + 1]; */
+bool   g_bIsSpeedTank[MAXPLAYERS + 1];
 bool   g_bIsBoosted[MAXPLAYERS + 1];
 int    g_BoostCooldown[MAXPLAYERS + 1];
+char   g_szBoostSoundPath[MAXPLAYERS + 1][PLATFORM_MAX_PATH];
+
+bool   g_bIsTeleportTank[MAXPLAYERS + 1];
 
 int    g_iMaxTanks = 1;
 
@@ -43,21 +48,30 @@ public void OnPluginStart()
     LogMessage("Tank Control started!");
 
     g_hIncludeBots                    = CreateConVar("tankcontrol_includebots", "0", "Set to 1 if you want plugin to process bots too.", FCVAR_PLUGIN | FCVAR_NOTIFY);
+    g_iSpecialTankChance              = CreateConVar("tankcontrol_specialTankChance", "65", "Set chance for a special tank to spawn in percent.", FCVAR_PLUGIN | FCVAR_NOTIFY);
     g_iPlayerThreshold1               = CreateConVar("tankcontrol_playerThreshold_1", "6", "Set player threshold value when 2 tanks should spawn", FCVAR_PLUGIN | FCVAR_NOTIFY);
     g_iPlayerThreshold2               = CreateConVar("tankcontrol_playerThreshold_2", "8", "Set player threshold value when 3 tanks should spawn", FCVAR_PLUGIN | FCVAR_NOTIFY);
     g_iTankBaseHealth                 = CreateConVar("tankcontrol_tankBaseHealth", "10000", "Set the base health of tank", FCVAR_PLUGIN | FCVAR_NOTIFY);
     g_iTankBonusHealthPerSurvivor     = CreateConVar("tankcontrol_tankBonusHealthPerSurvivor", "1500", "Set the bonus health each tank gets for each survivor", FCVAR_PLUGIN | FCVAR_NOTIFY);
 
-    g_fSpeedTankBaseSpeedMultiplier   = CreateConVar("tankcontrol_speedTankBaseSpeedMultiplier", "0.9", "Set the Speed Tank's base speed multiplier (1.0 = normal speed, 0.9 = 90% of normal speed, etc.)", FCVAR_PLUGIN | FCVAR_NOTIFY);
-    g_fSpeedTankBoostMultiplier       = CreateConVar("tankcontrol_speedTankBoostMultiplier", "1.1", "Set the Speed Tank's boost speed multiplier (1.0 = normal speed, 1.1 = 110% of normal speed, etc.)", FCVAR_PLUGIN | FCVAR_NOTIFY);
+    g_fSpeedTankBaseSpeedMultiplier   = CreateConVar("tankcontrol_speedTankBaseSpeedMultiplier", "0.875", "Set the Speed Tank's base speed multiplier (1.0 = normal speed, 0.9 = 90% of normal speed, etc.)", FCVAR_PLUGIN | FCVAR_NOTIFY);
+    g_fSpeedTankBoostMultiplier       = CreateConVar("tankcontrol_speedTankBoostMultiplier", "1.2", "Set the Speed Tank's boost speed multiplier (1.0 = normal speed, 1.1 = 110% of normal speed, etc.)", FCVAR_PLUGIN | FCVAR_NOTIFY);
     g_fSpeedTankBoostDuration         = CreateConVar("tankcontrol_speedTankBoostDuration", "15.0", "Set the Speed Tank's boost duration in seconds", FCVAR_PLUGIN | FCVAR_NOTIFY);
     g_hSpeedTankBoostCooldownInterval = CreateConVar("tankcontrol_speedTankBoostCooldownInterval", "10-30", "Set the Speed Tank's cooldown interval (e. g. 10-30 = cooldown for speed boost lasts somewhere between 10 and 30 seconds)", FCVAR_PLUGIN | FCVAR_NOTIFY);
 
     AutoExecConfig(true, "tankControl");
 
-    PrecacheSound("weapons/molotov/explode.wav", true);
+    PrecacheSound("weapons/hegrenade/explode3.wav", true);
 
     HookEvent("tank_spawn", onTankSpawn);
+
+    for (int i = 1; i <= MaxClients; i++)
+    {
+        if (IsClientInGame(i))
+        {
+            OnClientPutInServer(i);
+        }
+    }
 }
 
 public void OnClientPutInServer(int client)
@@ -155,18 +169,16 @@ public Action SpawnExtraTank(Handle timer, any existingTankClient)
 
 TankType GetRandomSpecialTankType()
 {
-    /* int roll = GetRandomInt(1, 100);
+    int roll = GetRandomInt(1, 100);
 
-    // 50% chance for special tank
-    if (roll > 50)
+    // 35% chance for default tank by default
+    if (roll <= (100 - g_iSpecialTankChance.IntValue))
     {
         LogMessage("Normal tank rolled!");
         return Tank_Default;
-    } */
+    }
 
-    /* int selection = GetRandomInt(1, 2) */
-
-    int selection = GetRandomInt(2, 2);
+    int selection = GetRandomInt(1, 3);
 
     switch (selection)
     {
@@ -178,6 +190,10 @@ TankType GetRandomSpecialTankType()
         case 2:
         {
             return Tank_Speed;
+        }
+        case 3:
+        {
+            return Tank_Teleport;
         }
     }
 
@@ -208,10 +224,17 @@ public Action Timer_ApplySpecialTankEffects(Handle timer, any packed)
         }
         case Tank_Speed:
         {
+            g_bIsSpeedTank[client] = true;
             SetEntityRenderColor(client, 0, 255, 0, 255);
             SetEntPropFloat(client, Prop_Data, "m_flLaggedMovementValue", g_fSpeedTankBaseSpeedMultiplier.FloatValue);
             CreateTimer(1.0, SpeedTank_BoostTimer, GetClientUserId(client), TIMER_REPEAT);
             PrintToChatAll("\x04[Mutant Tanks] \x01Speed tank spawned!");
+        }
+        case Tank_Teleport:
+        {
+            g_bIsTeleportTank[client] = true;
+            SetEntityRenderColor(client, 128, 0, 128, 255);
+            PrintToChatAll("\x04[Mutant Tanks] \x01Teleport tank spawned!");
         }
     }
 
@@ -239,7 +262,7 @@ public Action SpeedTank_BoostTimer(Handle timer, any userid)
 
     g_bIsBoosted[client] = true;
     SetEntPropFloat(client, Prop_Data, "m_flLaggedMovementValue", g_fSpeedTankBoostMultiplier.FloatValue);
-
+    CreateTimer(1.0, SpeedTank_SoundLoop, GetClientUserId(client), TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
     CreateTimer(g_fSpeedTankBoostDuration.FloatValue, ResetSpeedTankSpeed, GetClientUserId(client));
 
     return Plugin_Continue;
@@ -252,12 +275,34 @@ public Action ResetSpeedTankSpeed(Handle timer, any userid)
         return Plugin_Stop;
 
     SetEntPropFloat(client, Prop_Data, "m_flLaggedMovementValue", g_fSpeedTankBaseSpeedMultiplier.FloatValue);
+
+    // stop emitting sounds
+    if (g_szBoostSoundPath[client][0] != '\0')
+    {
+        StopSound(client, SNDCHAN_STATIC, g_szBoostSoundPath[client]);
+        g_szBoostSoundPath[client][0] = '\0'
+    }
+
     g_bIsBoosted[client]    = false;
 
     int delay               = GetRandomCooldownFromConVar(g_hSpeedTankBoostCooldownInterval);
+
     g_BoostCooldown[client] = delay;
 
     return Plugin_Stop;
+}
+
+public Action SpeedTank_SoundLoop(Handle timer, any userid)
+{
+    int client = GetClientOfUserId(userid);
+    if (!IsValidClient(client) || !IsPlayerAlive(client) || !IsTank(client) || !g_bIsBoosted[client])
+        return Plugin_Stop;
+
+    int soundIndex = GetRandomInt(1, 7);
+    Format(g_szBoostSoundPath[client], sizeof(g_szBoostSoundPath[]), "player/tank/voice/pain/tank_fire_0%d.wav", soundIndex);
+
+    EmitSoundToAll(g_szBoostSoundPath[client], client, SNDCHAN_STATIC, SNDLEVEL_SCREAMING, SND_NOFLAGS, 1.0);
+    return Plugin_Continue;
 }
 
 // sawn fire trail where tank is walking
@@ -304,7 +349,6 @@ public Action OnRockSpawned(int entity)
     return Plugin_Continue;
 }
 
-// check if rock thrower is fire tank
 public Action CheckRockThrowLater(Handle timer, any ref)
 {
     int entity = EntRefToEntIndex(ref);
@@ -333,6 +377,9 @@ public Action CheckRockThrowLater(Handle timer, any ref)
         ScaleVector(velocity, 1.75);
         TeleportEntity(entity, NULL_VECTOR, NULL_VECTOR, velocity);
     }
+    else if (IsValidClient(owner) && g_bIsTeleportTank[owner]) {
+        SDKHook(entity, SDKHook_Touch, OnRockTouch);
+    }
     else
     {
         LogMessage("Rock owner is not valid or not a FireTank.");
@@ -344,12 +391,24 @@ public Action CheckRockThrowLater(Handle timer, any ref)
 public Action OnRockTouch(int entity, int other)
 {
     int owner = GetEntPropEnt(entity, Prop_Send, "m_hThrower");
-    if (!IsValidEntity(entity) || !g_bIsFireTank[owner])
+    if (!IsValidEntity(entity) || !IsTank(owner))
         return Plugin_Continue;
 
     float pos[3];
     GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos);
-    CreateFireGridAtPosition(pos);
+
+    if (g_bIsFireTank[owner])
+    {
+        CreateFireGridAtPosition(pos);
+    }
+
+    if (g_bIsTeleportTank[owner])
+    {
+        float ang[3];
+        GetClientAbsAngles(owner, ang);
+        TeleportEntity(owner, pos, ang, NULL_VECTOR);
+        EmitSoundToAll("ambient/energy/zap9.wav", owner, SNDCHAN_AUTO, SNDLEVEL_RAIDSIREN, SND_NOFLAGS, 1.0);
+    }
 
     SDKUnhook(entity, SDKHook_Touch, OnRockTouch);
     return Plugin_Continue;
@@ -359,9 +418,23 @@ public Action OnSurvivorDamaged(int victim, int &attacker, int &inflictor, float
 {
     if (!IsValidClient(attacker) || !IsTank(attacker)) return Plugin_Continue;
 
-    if (!g_bIsFireTank[attacker]) return Plugin_Continue;
-
-    CreateTimer(0.5, DealFireTankDoT, GetClientUserId(victim));
+    if (g_bIsFireTank[attacker])
+    {
+        CreateTimer(0.5, DealFireTankDoT, GetClientUserId(victim));
+    }
+    if (g_bIsTeleportTank[attacker] && IsValidEntity(inflictor))
+    {
+        char cls[32];
+        GetEdictClassname(inflictor, cls, sizeof(cls));
+        if (StrEqual(cls, "tank_rock"))
+        {
+            float pos[3], ang[3];
+            GetEntPropVector(inflictor, Prop_Send, "m_vecOrigin", pos);
+            GetClientAbsAngles(attacker, ang);
+            TeleportEntity(attacker, pos, ang, NULL_VECTOR);
+            EmitSoundToAll("ambient/energy/zap9.wav", attacker, SNDCHAN_AUTO, SNDLEVEL_RAIDSIREN, SND_NOFLAGS, 1.0);
+        }
+    }
 
     return Plugin_Continue;
 }
@@ -397,7 +470,7 @@ void CreateFireGridAtPosition(float center[3], float spread = 25.0)
         }
     }
 
-    EmitSoundToAll("weapons/molotov/explode.wav", .origin = center);
+    EmitSoundToAll("weapons/hegrenade/explode3.wav", SOUND_FROM_WORLD, SNDCHAN_AUTO, SNDLEVEL_SCREAMING, SND_NOFLAGS, 1.0, SNDPITCH_NORMAL, -1, center);
 }
 
 public void SpawnFire(float pos[3], char[] fireSize, char[] duration)
@@ -498,7 +571,7 @@ bool IsSpecialTankAlive()
     {
         if (IsClientInGame(i) && IsPlayerAlive(i) && IsTank(i))
         {
-            if (g_bIsFireTank[i])
+            if (g_bIsFireTank[i] || g_bIsSpeedTank[i] || g_bIsTeleportTank[i])
             {
                 return true;
             }
@@ -509,9 +582,12 @@ bool IsSpecialTankAlive()
 
 public void resetFlags(int client)
 {
-    g_bIsFireTank[client]   = false;
-    g_bIsBoosted[client]    = false;
-    g_BoostCooldown[client] = 0;
+    g_bIsFireTank[client]         = false;
+    g_bIsSpeedTank[client]        = false;
+    g_bIsBoosted[client]          = false;
+    g_bIsTeleportTank[client]     = false;
+    g_BoostCooldown[client]       = 0;
+    g_szBoostSoundPath[client][0] = '\0';
 }
 
 int GetRandomCooldownFromConVar(ConVar convar)
